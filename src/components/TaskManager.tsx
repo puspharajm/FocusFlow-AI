@@ -13,7 +13,9 @@ import {
   Sliders,
   Zap,
   Flame,
-  FileText
+  FileText,
+  BarChart2,
+  TrendingUp
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { Task, PriorityLevel, EnergyLevel, TaskStatus, SubTask, FocusSession } from "../types";
@@ -100,6 +102,20 @@ export function estimateTaskTime(
     confidence,
     reason: `Computed from ${count} similar focus session(s) in history.`
   };
+}
+
+/**
+ * AI Time Estimator service: computes realistic focus durations by analyzing 
+ * historical completion durations, category alignments, and title keyword pairings.
+ */
+export function getAiEstimatedDuration(
+  title: string,
+  category: string,
+  sessions: FocusSession[],
+  tasks: Task[]
+): number {
+  const estimate = estimateTaskTime(title, category, sessions, tasks);
+  return estimate.suggestedMinutes;
 }
 
 interface TaskManagerProps {
@@ -216,6 +232,10 @@ export default function TaskManager({ tasks, sessions, onTasksChange, onXpEarned
     e.preventDefault();
     if (!editingTask || !editTitle.trim()) return;
 
+    const suggestedDur = getAiEstimatedDuration(editTitle.trim(), editCategory, sessions, tasks);
+    const resolvedPriorityScore = editPriority === "high" ? 5 : editPriority === "medium" ? 3 : 1;
+    const resolvedEffortScore = editEnergy === "high" ? 5 : editEnergy === "medium" ? 3 : 1;
+
     const updated = tasks.map((t) => {
       if (t.id === editingTask.id) {
         return {
@@ -227,8 +247,10 @@ export default function TaskManager({ tasks, sessions, onTasksChange, onXpEarned
           energy: editEnergy,
           category: editCategory,
           deadline: editDeadline || undefined,
-          estimatedMinutes: Number(editEstimatedMinutes) || 30,
-          estimated_duration: Number(editEstimatedMinutes) || 30
+          estimatedMinutes: Number(editEstimatedMinutes) || suggestedDur || 30,
+          estimated_duration: Number(editEstimatedMinutes) || suggestedDur || 30,
+          urgency_score: resolvedPriorityScore,
+          effort_score: resolvedEffortScore
         };
       }
       return t;
@@ -249,10 +271,10 @@ export default function TaskManager({ tasks, sessions, onTasksChange, onXpEarned
   }, []);
 
   const calculateTaskWeight = (task: Task): number => {
-    const uMap: Record<string, number> = { high: 3, medium: 2, low: 1 };
-    const eMap: Record<string, number> = { high: 3, medium: 2, low: 1 };
-    const uScore = uMap[(task.priority || "medium").toLowerCase()] || 2;
-    const eScore = eMap[(task.energy || task.effort || "medium").toLowerCase()] || 2;
+    const uMap: Record<string, number> = { high: 5, medium: 3, low: 1 };
+    const eMap: Record<string, number> = { high: 5, medium: 3, low: 1 };
+    const uScore = task.urgency_score !== undefined ? task.urgency_score : (uMap[(task.priority || "medium").toLowerCase()] || 3);
+    const eScore = task.effort_score !== undefined ? task.effort_score : (eMap[(task.energy || task.effort || "medium").toLowerCase()] || 3);
     return uScore * 0.6 + eScore * 0.4;
   };
 
@@ -260,7 +282,7 @@ export default function TaskManager({ tasks, sessions, onTasksChange, onXpEarned
     const sorted = [...tasks].sort((a, b) => calculateTaskWeight(b) - calculateTaskWeight(a));
     onTasksChange(sorted);
     if (onAlert) {
-      onAlert("Priority sequence ranks updated via (Urgency * 0.6) + (Effort * 0.4).", "success");
+      onAlert("Priority sequence ranks updated via (Urgency Score * 0.6) + (Effort Score * 0.4).", "success");
     }
   };
 
@@ -268,6 +290,10 @@ export default function TaskManager({ tasks, sessions, onTasksChange, onXpEarned
   const handleAddNewTask = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTitle.trim()) return;
+
+    const suggestedDur = getAiEstimatedDuration(newTitle.trim(), category, sessions, tasks);
+    const resolvedPriorityScore = priority === "high" ? 5 : priority === "medium" ? 3 : 1;
+    const resolvedEffortScore = energy === "high" ? 5 : energy === "medium" ? 3 : 1;
 
     const newTask: Task = {
       id: "task-" + Date.now(),
@@ -281,8 +307,10 @@ export default function TaskManager({ tasks, sessions, onTasksChange, onXpEarned
       status: "todo",
       subtasks: [],
       createdAt: new Date().toISOString(),
-      estimatedMinutes: Number(estimatedMinutes) || 30,
-      estimated_duration: Number(estimatedMinutes) || 30
+      estimatedMinutes: Number(estimatedMinutes) || suggestedDur || 30,
+      estimated_duration: Number(estimatedMinutes) || suggestedDur || 30,
+      urgency_score: resolvedPriorityScore,
+      effort_score: resolvedEffortScore
     };
 
     onTasksChange([...tasks, newTask]);
@@ -632,10 +660,13 @@ export default function TaskManager({ tasks, sessions, onTasksChange, onXpEarned
 
       {/* Task Completion Velocity Bar Chart */}
       <div className="bg-white border border-slate-200/85 rounded-3xl p-5 shadow-sm space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+        <div className="flex items-center gap-1.5 text-indigo-650 bg-indigo-50/50 border border-indigo-100/40 px-3 py-1 rounded-xl self-start w-fit text-[10px] font-bold tracking-wider uppercase font-mono">
+          <BarChart2 className="w-3.5 h-3.5" /> Analytics Dashboard
+        </div>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-1">
           <div>
             <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-1.5">
-              <Zap className="w-4 h-4 text-brand-primary animate-pulse" /> Task Completion Velocity
+              <TrendingUp className="w-4 h-4 text-brand-primary" /> Task Completion Velocity
             </h3>
             <p className="text-xs text-slate-400 font-sans">Completions recorded per day over the last week</p>
           </div>
@@ -788,9 +819,9 @@ export default function TaskManager({ tasks, sessions, onTasksChange, onXpEarned
                           {/* Display deadlines or metadata */}
                           <div className="flex flex-wrap items-center gap-1.5 text-[10px] text-slate-400 font-mono">
                             <span className="bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">{task.category}</span>
-                            {task.estimatedMinutes && (
-                              <span className="bg-indigo-50/60 text-indigo-700 px-1.5 py-0.5 rounded border border-indigo-100 flex items-center gap-1">
-                                <Clock className="w-2.5 h-2.5 shrink-0" /> {task.estimatedMinutes}m
+                            {(task.estimated_duration || task.estimatedMinutes) && (
+                              <span className="bg-indigo-50/75 text-indigo-700 px-2 py-0.5 rounded border border-indigo-120 flex items-center gap-1 font-semibold">
+                                <Clock className="w-2.5 h-2.5 shrink-0 text-indigo-500" /> AI Est: {task.estimated_duration || task.estimatedMinutes}m
                               </span>
                             )}
                             {task.deadline && <span className="flex items-center gap-0.5">⏰ {task.deadline}</span>}
@@ -966,13 +997,18 @@ export default function TaskManager({ tasks, sessions, onTasksChange, onXpEarned
           <div className="px-2.5 py-1 text-[9px] text-slate-500 uppercase font-mono">Set Priority</div>
           {["low", "medium", "high"].map((pr) => (
             <button
-              key={pr}
-              onClick={() => {
-                const updated = tasks.map(t => t.id === contextMenu.taskId ? { ...t, priority: pr as PriorityLevel } : t);
-                onTasksChange(updated);
-                setContextMenu(null);
-                if (onAlert) onAlert(`Task priority switched to ${pr}`, "success");
-              }}
+               key={pr}
+               onClick={() => {
+                 const uScore = pr === "high" ? 5 : pr === "medium" ? 3 : 1;
+                 const updated = tasks.map(t => t.id === contextMenu.taskId ? { 
+                   ...t, 
+                   priority: pr as PriorityLevel,
+                   urgency_score: uScore
+                 } : t);
+                 onTasksChange(updated);
+                 setContextMenu(null);
+                 if (onAlert) onAlert(`Task priority switched to ${pr}`, "success");
+               }}
               className="w-full text-left px-4 py-1 hover:bg-slate-900 rounded-lg text-slate-350 hover:text-white capitalize flex items-center gap-2 cursor-pointer"
             >
               <span className={`w-1.5 h-1.5 rounded-full ${pr === "high" ? "bg-red-500" : pr === "medium" ? "bg-amber-500" : "bg-slate-450"}`} />

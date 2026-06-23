@@ -27,6 +27,8 @@ export interface Task {
   completedAt?: string;
   estimatedMinutes?: number;
   estimated_duration?: number;
+  urgency_score?: number;
+  effort_score?: number;
 }
 
 export interface Habit {
